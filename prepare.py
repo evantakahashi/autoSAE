@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Iterator
 
+import numpy as np
 import torch
 
 # ------------------------------------------------------------------------------
@@ -109,6 +111,97 @@ def load_base_model():
     return model, tokenizer
 
 
+# ------------------------------------------------------------------------------
+# Tokenization + data shards.
+#
+# We use a streaming slice of OpenWebText, tokenized with the base model's
+# tokenizer, packed into fixed-length sequences of MAX_SEQ_LEN, and saved as
+# uint16 memmap shards (Pythia vocab fits in uint16). This is the same
+# packing strategy nanochat / tinystories use.
+# ------------------------------------------------------------------------------
+
+TOKENS_DTYPE = np.uint16
+
+
+def _tokens_path(split: str) -> Path:
+    return TOKENS_DIR / f"{split}.bin"
+
+
+def _packed_sequences(tokenizer, target_tokens: int) -> Iterator[list[int]]:
+    """Yield lists of token IDs of length MAX_SEQ_LEN, packed from a text stream.
+
+    Uses HuggingFace `datasets` in streaming mode so we never download the full
+    corpus. We concatenate docs, separated by the eos token, and slice into
+    fixed-length chunks.
+    """
+    from datasets import load_dataset
+
+    ds = load_dataset(
+        "Skylion007/openwebtext",
+        split="train",
+        streaming=True,
+        trust_remote_code=True,
+    )
+
+    eos = tokenizer.eos_token_id
+    buf: list[int] = []
+    emitted = 0
+    for row in ds:
+        ids = tokenizer.encode(row["text"])
+        buf.extend(ids)
+        buf.append(eos)
+        while len(buf) >= MAX_SEQ_LEN:
+            chunk = buf[:MAX_SEQ_LEN]
+            buf = buf[MAX_SEQ_LEN:]
+            yield chunk
+            emitted += MAX_SEQ_LEN
+            if emitted >= target_tokens:
+                return
+
+
+def _write_tokens_split(tokenizer, split: str, target_tokens: int) -> Path:
+    from tqdm import tqdm
+
+    os.makedirs(TOKENS_DIR, exist_ok=True)
+    out = _tokens_path(split)
+    if out.exists() and out.stat().st_size >= target_tokens * 2:
+        return out  # already cached
+
+    n_seqs = target_tokens // MAX_SEQ_LEN
+    mm = np.memmap(out, dtype=TOKENS_DTYPE, mode="w+", shape=(n_seqs * MAX_SEQ_LEN,))
+
+    cursor = 0
+    pbar = tqdm(total=n_seqs, desc=f"tokenize/{split}")
+    for chunk in _packed_sequences(tokenizer, target_tokens):
+        mm[cursor : cursor + MAX_SEQ_LEN] = np.asarray(chunk, dtype=TOKENS_DTYPE)
+        cursor += MAX_SEQ_LEN
+        pbar.update(1)
+        if cursor >= n_seqs * MAX_SEQ_LEN:
+            break
+    pbar.close()
+    mm.flush()
+    return out
+
+
+def prepare_tokens() -> None:
+    """One-time step: pack ~10M train tokens and ~500K eval tokens to disk."""
+    _, tokenizer = load_base_model()
+    _write_tokens_split(tokenizer, "train", TRAIN_TOKENS)
+    _write_tokens_split(tokenizer, "eval", EVAL_TOKENS)
+
+
+def load_tokens(split: str) -> np.ndarray:
+    """Return a memmapped array of packed tokens shaped [n_seqs, MAX_SEQ_LEN]."""
+    path = _tokens_path(split)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing tokenized shard at {path}. Run `uv run prepare.py` first."
+        )
+    arr = np.memmap(path, dtype=TOKENS_DTYPE, mode="r")
+    n_seqs = arr.shape[0] // MAX_SEQ_LEN
+    return arr[: n_seqs * MAX_SEQ_LEN].reshape(n_seqs, MAX_SEQ_LEN)
+
+
 if __name__ == "__main__":
     # Smoke-check: resolve paths and announce the configuration. Real data prep
     # lands in the next commit.
@@ -122,3 +215,9 @@ if __name__ == "__main__":
     print(f"EVAL_TOKENS       = {EVAL_TOKENS:,}")
     print(f"CACHE_DIR         = {CACHE_DIR}")
     print(f"device            = {get_device()}")
+    print("tokenizing...")
+    prepare_tokens()
+    print("done. token shards:")
+    for split in ("train", "eval"):
+        p = _tokens_path(split)
+        print(f"  {split}: {p} ({p.stat().st_size / 1e6:.1f} MB)")
