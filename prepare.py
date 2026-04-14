@@ -292,6 +292,149 @@ def load_activations(split: str) -> np.ndarray:
     return np.memmap(path, dtype=np.float16, mode="r", shape=(n_tokens, D_MODEL))
 
 
+# ------------------------------------------------------------------------------
+# Evaluation harness — the ground-truth metric.
+#
+# The agent's SAE is evaluated on three axes:
+#
+#   1. ce_loss_delta  — extra nats the base model incurs on held-out tokens when
+#      the LAYER-th residual stream is replaced by the SAE reconstruction.
+#      This is the PRIMARY metric. Lower is better.
+#
+#   2. l0             — mean number of non-zero features per token. Constraint:
+#      must be <= L0_TARGET or the run is invalid.
+#
+#   3. dead_fraction  — fraction of SAE features that never fire over the eval
+#      stream. Constraint: must be <= DEAD_FRAC_MAX or the run is invalid.
+#
+# Plus diagnostics: reconstruction MSE, variance explained.
+#
+# This function is the SAE's val_bpb — the single authoritative scoreboard.
+# ------------------------------------------------------------------------------
+
+EVAL_BATCH_SEQS: int = 4  # sequences per forward pass during eval
+
+
+@torch.no_grad()
+def evaluate_sae(sae: torch.nn.Module, eval_seqs: int = 64) -> dict:
+    """Evaluate a trained SAE. Returns a dict of metrics.
+
+    The SAE must implement `forward(x) -> (recon, features)` where x and recon
+    are [..., D_MODEL] and features is [..., N_FEATURES].
+
+    Args:
+        sae: the trained SAE, in eval mode, on the same device as the base model.
+        eval_seqs: number of held-out sequences to score. 64 * 512 = 32K tokens,
+                   enough for a stable ce_loss_delta estimate.
+    """
+    model, _ = load_base_model()
+    device = get_device()
+    sae = sae.to(device).eval()
+
+    tokens = load_tokens("eval")
+    eval_seqs = min(eval_seqs, tokens.shape[0])
+    tokens = tokens[:eval_seqs]
+
+    # Accumulators.
+    ce_clean_sum = 0.0
+    ce_patched_sum = 0.0
+    n_tokens_scored = 0
+
+    mse_sum = 0.0
+    var_sum = 0.0
+    act_sq_sum = 0.0
+    l0_sum = 0.0
+    # Track whether each feature ever fired.
+    fired: torch.Tensor | None = None
+
+    # Hook: capture clean residual, replace with SAE reconstruction.
+    layer = _residual_hook_target(model)
+    mode = {"value": "capture"}  # "capture" | "patch"
+    captured: list[torch.Tensor] = []
+
+    def hook(_module, _inp, output):
+        h = output[0] if isinstance(output, tuple) else output
+        if mode["value"] == "capture":
+            captured.append(h)
+            return output
+        # patch mode: replace h with sae(h).recon
+        h32 = h.to(torch.float32)
+        recon, feats = sae(h32)
+        new_h = recon.to(h.dtype)
+        if isinstance(output, tuple):
+            return (new_h,) + output[1:]
+        return new_h
+
+    handle = layer.register_forward_hook(hook)
+
+    try:
+        for start in range(0, eval_seqs, EVAL_BATCH_SEQS):
+            batch_np = tokens[start : start + EVAL_BATCH_SEQS]
+            batch = torch.from_numpy(batch_np.astype(np.int64)).to(device)
+
+            # ---- Pass 1: clean forward, capture activations, score CE.
+            mode["value"] = "capture"
+            captured.clear()
+            out_clean = model(batch, labels=batch)
+            h_clean = captured[0].to(torch.float32)  # [B, T, D]
+            ce_clean = out_clean.loss.item()
+            B, T, _ = h_clean.shape
+            n = B * (T - 1)  # label-shifted CE is over T-1 positions per seq
+            ce_clean_sum += ce_clean * n
+
+            # SAE diagnostics on the clean activations.
+            flat = h_clean.reshape(-1, D_MODEL)
+            recon, feats = sae(flat)
+            mse_sum += torch.nn.functional.mse_loss(recon, flat, reduction="sum").item()
+            var_sum += (flat - flat.mean(dim=0, keepdim=True)).pow(2).sum().item()
+            act_sq_sum += flat.pow(2).sum().item()
+            l0_sum += (feats != 0).float().sum(dim=-1).sum().item()
+            active = (feats != 0).any(dim=0).detach()  # [N_FEATURES]
+            fired = active if fired is None else (fired | active)
+
+            # ---- Pass 2: patched forward, score CE with SAE reconstruction.
+            mode["value"] = "patch"
+            out_patched = model(batch, labels=batch)
+            ce_patched = out_patched.loss.item()
+            ce_patched_sum += ce_patched * n
+            n_tokens_scored += n
+    finally:
+        handle.remove()
+
+    ce_clean = ce_clean_sum / max(n_tokens_scored, 1)
+    ce_patched = ce_patched_sum / max(n_tokens_scored, 1)
+    ce_loss_delta = ce_patched - ce_clean
+
+    total_feats = feats.shape[-1]
+    dead_fraction = 1.0 - (fired.float().mean().item() if fired is not None else 0.0)
+    l0 = l0_sum / max(n_tokens_scored, 1)
+    mse = mse_sum / max(act_sq_sum, 1e-9)  # normalized MSE
+    variance_explained = 1.0 - (mse_sum / max(var_sum, 1e-9))
+
+    return {
+        "ce_clean": ce_clean,
+        "ce_patched": ce_patched,
+        "ce_loss_delta": ce_loss_delta,
+        "l0": l0,
+        "dead_fraction": dead_fraction,
+        "mse_normalized": mse,
+        "variance_explained": variance_explained,
+        "n_features": total_feats,
+        "n_tokens_scored": n_tokens_scored,
+    }
+
+
+def validate_constraints(metrics: dict, peak_vram_gb: float) -> tuple[bool, str]:
+    """Check hard constraints. Returns (is_valid, reason_if_invalid)."""
+    if metrics["l0"] > L0_TARGET:
+        return False, f"L0={metrics['l0']:.1f} > L0_TARGET={L0_TARGET}"
+    if metrics["dead_fraction"] > DEAD_FRAC_MAX:
+        return False, f"dead_fraction={metrics['dead_fraction']:.3f} > {DEAD_FRAC_MAX}"
+    if peak_vram_gb > PEAK_VRAM_GB_MAX:
+        return False, f"peak_vram_gb={peak_vram_gb:.1f} > {PEAK_VRAM_GB_MAX}"
+    return True, ""
+
+
 if __name__ == "__main__":
     # Smoke-check: resolve paths and announce the configuration. Real data prep
     # lands in the next commit.
