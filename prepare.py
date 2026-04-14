@@ -202,6 +202,96 @@ def load_tokens(split: str) -> np.ndarray:
     return arr[: n_seqs * MAX_SEQ_LEN].reshape(n_seqs, MAX_SEQ_LEN)
 
 
+# ------------------------------------------------------------------------------
+# Activation caching.
+#
+# We register a forward hook on the LAYER-th residual stream and dump activations
+# to disk as an fp16 memmap. Shape: [n_tokens, D_MODEL]. This is the SAE training
+# substrate — the agent's SAE only ever sees these cached vectors (plus the
+# held-out eval set), never the base model itself.
+# ------------------------------------------------------------------------------
+
+def _acts_path(split: str) -> Path:
+    return ACTS_DIR / f"{split}_layer{LAYER}.bin"
+
+
+def _residual_hook_target(model):
+    """Return the submodule whose output is the residual stream after LAYER."""
+    # Pythia (GPTNeoX) layout: model.gpt_neox.layers[i] -> residual post-block.
+    return model.gpt_neox.layers[LAYER]
+
+
+@torch.no_grad()
+def _extract_activations(split: str, target_tokens: int) -> Path:
+    from tqdm import tqdm
+
+    os.makedirs(ACTS_DIR, exist_ok=True)
+    out = _acts_path(split)
+    expected_bytes = target_tokens * D_MODEL * 2  # fp16
+    if out.exists() and out.stat().st_size >= expected_bytes:
+        return out  # already cached
+
+    model, _ = load_base_model()
+    device = get_device()
+    tokens = load_tokens(split)  # [n_seqs, MAX_SEQ_LEN]
+
+    mm = np.memmap(out, dtype=np.float16, mode="w+", shape=(target_tokens, D_MODEL))
+    cursor = 0
+
+    # Forward-hook capture.
+    captured: list[torch.Tensor] = []
+    def hook(_module, _inp, output):
+        # GPTNeoX block output is a tuple (hidden_states, ...); hidden_states is [B, T, D].
+        h = output[0] if isinstance(output, tuple) else output
+        captured.append(h)
+
+    handle = _residual_hook_target(model).register_forward_hook(hook)
+
+    # Choose a batch size that fits comfortably on a 16GB card.
+    # Pythia-160M at seq 512 with bf16 is ~100MB/seq of activation memory,
+    # so batch 8 stays well under budget.
+    batch_size = 8
+
+    try:
+        pbar = tqdm(total=target_tokens, desc=f"activations/{split}", unit="tok")
+        for start in range(0, tokens.shape[0], batch_size):
+            if cursor >= target_tokens:
+                break
+            batch_np = tokens[start : start + batch_size]
+            batch = torch.from_numpy(batch_np.astype(np.int64)).to(device)
+            captured.clear()
+            model(batch)
+            h = captured[0]  # [B, T, D]
+            flat = h.reshape(-1, D_MODEL).to(torch.float16).cpu().numpy()
+            n = min(flat.shape[0], target_tokens - cursor)
+            mm[cursor : cursor + n] = flat[:n]
+            cursor += n
+            pbar.update(n)
+        pbar.close()
+    finally:
+        handle.remove()
+
+    mm.flush()
+    return out
+
+
+def prepare_activations() -> None:
+    """One-time step: dump residual-stream activations for train + eval splits."""
+    _extract_activations("train", TRAIN_TOKENS)
+    _extract_activations("eval", EVAL_TOKENS)
+
+
+def load_activations(split: str) -> np.ndarray:
+    """Return memmapped activations shaped [n_tokens, D_MODEL]."""
+    path = _acts_path(split)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing activation cache at {path}. Run `uv run prepare.py` first."
+        )
+    n_tokens = path.stat().st_size // (D_MODEL * 2)
+    return np.memmap(path, dtype=np.float16, mode="r", shape=(n_tokens, D_MODEL))
+
+
 if __name__ == "__main__":
     # Smoke-check: resolve paths and announce the configuration. Real data prep
     # lands in the next commit.
@@ -217,7 +307,13 @@ if __name__ == "__main__":
     print(f"device            = {get_device()}")
     print("tokenizing...")
     prepare_tokens()
-    print("done. token shards:")
+    print("token shards:")
     for split in ("train", "eval"):
         p = _tokens_path(split)
         print(f"  {split}: {p} ({p.stat().st_size / 1e6:.1f} MB)")
+    print("caching activations...")
+    prepare_activations()
+    print("activation shards:")
+    for split in ("train", "eval"):
+        p = _acts_path(split)
+        print(f"  {split}: {p} ({p.stat().st_size / 1e9:.2f} GB)")
