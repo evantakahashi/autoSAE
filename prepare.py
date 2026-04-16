@@ -140,7 +140,6 @@ def _packed_sequences(tokenizer, target_tokens: int) -> Iterator[list[int]]:
         "Skylion007/openwebtext",
         split="train",
         streaming=True,
-        trust_remote_code=True,
     )
 
     eos = tokenizer.eos_token_id
