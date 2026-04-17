@@ -17,6 +17,12 @@ env/
 .DS_Store
 Thumbs.db
 
+# Viz outputs — regenerated from the frozen model / latest SAE run.
+tour.html
+dashboard.html
+explore_features.html
+viz/_cache/
+
 # Autoresearch-style untracked run artifacts
 results.tsv
 run.log
