@@ -40,7 +40,12 @@ PEAK_VRAM_GB_MAX: float = 14.0
 TIME_BUDGET_SEC: int = 300   # 5 minutes, matching autoresearch
 
 # Data volumes for prepare-time caching.
-TRAIN_TOKENS: int = 10_000_000
+#
+# With D_MODEL=768 and fp16 activations, each token costs 1.5 KB on disk.
+# 4M tokens => ~6.0 GB; 500K eval => ~0.75 GB. This fits comfortably on any
+# machine with ~10 GB free. At batch 4096, the 5-min training budget on a
+# 4070 Ti Super will epoch over 4M tokens ~15x — plenty for SAE convergence.
+TRAIN_TOKENS: int = 4_000_000
 EVAL_TOKENS: int = 500_000
 
 # Cache locations. Everything lives under ~/.cache/automechresearch so the repo

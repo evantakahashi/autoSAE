@@ -44,7 +44,7 @@ run.log                    # most recent experiment's stdout
 
 - **NVIDIA GPU with ≥16 GB VRAM** (tested on an RTX 4070 Ti Super, 16 GB).
 - Python 3.10+, [uv](https://docs.astral.sh/uv/).
-- ~20 GB free disk for the activation cache.
+- ~10 GB free disk for the activation cache (4M train + 500K eval tokens at fp16).
 
 Other platforms (CPU, MPS, AMD) are not supported in the main branch to keep the code minimal. Forks welcome — see `prepare.py` constants for the knobs you'd tune.
 
@@ -57,7 +57,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 2. Install dependencies
 uv sync
 
-# 3. One-time data prep: tokens + activation cache (~10 min, ~15 GB on disk)
+# 3. One-time data prep: tokens + activation cache (~5 min, ~7 GB on disk)
 uv run prepare.py
 
 # 4. Sanity-check a single training run (~6 min)
