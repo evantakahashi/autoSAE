@@ -105,7 +105,7 @@ def load_base_model():
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         cache_dir=str(MODEL_CACHE_DIR),
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     model.eval()
     model.to(get_device())
