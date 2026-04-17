@@ -143,7 +143,12 @@ def train():
     expansion = 8
     batch_size = 4096
     lr = 3e-4
-    l1_coeff = 5e-4
+    # l1_coeff tuned so the baseline lands near (but inside) the L0_TARGET=64
+    # constraint. At l1_coeff=5e-4, L0 ≈ 560 (way too dense, valid=0). At 3e-3
+    # the norm-weighted L1 term dominates MSE by ~10x, pushing L0 into the
+    # ~40-70 range on Pythia-160M layer 8. The agent's job is to improve from
+    # this anchor — not to find the sparsity regime from scratch.
+    l1_coeff = 3e-3
     log_every = 200
 
     sae = SAE(d_model=D_MODEL, expansion=expansion).to(device)
