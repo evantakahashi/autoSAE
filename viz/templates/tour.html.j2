@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>automechresearch — base model tour</title>
+  <style>
+    :root {
+      --fg: #1a1a1a;
+      --muted: #666;
+      --bg: #fafafa;
+      --card: #fff;
+      --accent: #2b6cb0;
+    }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, sans-serif; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 96px; }
+    header { margin-bottom: 32px; }
+    h1 { font-size: 28px; margin: 0 0 6px; }
+    .subtitle { color: var(--muted); font-size: 15px; }
+    section { background: var(--card); border: 1px solid #e4e4e4; border-radius: 8px; padding: 20px 24px; margin-bottom: 28px; }
+    section h2 { margin-top: 0; font-size: 20px; }
+    .caption { color: var(--muted); font-size: 13px; margin: -4px 0 12px; }
+    .cite { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+    table.lens { border-collapse: collapse; font-size: 12px; font-family: ui-monospace, monospace; }
+    table.lens td, table.lens th { border: 1px solid #eaeaea; padding: 3px 6px; text-align: left; white-space: nowrap; }
+    table.lens th { background: #f4f4f4; position: sticky; top: 0; }
+    .lens-wrap { max-height: 420px; overflow: auto; border: 1px solid #eaeaea; border-radius: 6px; }
+    .pill { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #eef2f7; color: #2b6cb0; font-size: 11px; margin-left: 6px; }
+    .head-ctrls { margin: 6px 0 10px; font-size: 13px; }
+    .head-ctrls label { margin-right: 12px; }
+    footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
+  </style>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>automechresearch — base model tour</h1>
+    <div class="subtitle">
+      Model: <code>{{ model_name }}</code> &middot; SAE target: layer {{ sae_layer }} residual stream
+      <span class="pill">generated {{ timestamp }}</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>1. Induction-head scores</h2>
+    <div class="caption">
+      Average attention from position <em>N+k</em> (in the repeated half of a random sequence) back to position
+      <em>k</em> (the matching token in the first half), averaged over {{ induction_n_seqs }} random sequences of
+      length {{ induction_seq_len }}. Heads that score ≳0.3 implement either content matching (layer 0-1) or true
+      induction (layer 2+). <span class="cite">Olsson+2022</span>
+    </div>
+    <div id="induction"></div>
+  </section>
+
+  <section>
+    <h2>2. Attention patterns</h2>
+    <div class="caption">
+      Raw attention matrices for every (layer, head) on the prompt:
+      <em>&ldquo;{{ attn_prompt }}&rdquo;</em>.
+      Rows = query position, columns = key position. Use the dropdowns below the chart.
+    </div>
+    <div id="attention"></div>
+  </section>
+
+  <section>
+    <h2>3. Logit lens</h2>
+    <div class="caption">
+      Prompt: <em>&ldquo;{{ lens_prompt }}&rdquo;</em>. Each cell shows the layer's top-1 next-token prediction
+      at that position (projected through the final LN + unembedding). Watch how predictions
+      concentrate as computation deepens. <span class="cite">nostalgebraist 2020</span>
+    </div>
+    <div class="lens-wrap">
+      <table class="lens">
+        <thead>
+          <tr>
+            <th>layer &#92; position</th>
+            {% for t in lens_tokens %}<th>{{ t|e }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in lens_rows %}
+          <tr>
+            <th>L{{ loop.index0 }}</th>
+            {% for cell in row %}<td title="{{ cell.tooltip|e }}">{{ cell.text|e }}<br><span style="color:#999">{{ cell.prob }}</span></td>{% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>4. Residual stream norms</h2>
+    <div class="caption">
+      Mean ‖h‖₂ over token positions, averaged across {{ resid_n_texts }} short natural-language sentences.
+      The SAE is trained on the residual stream at layer {{ sae_layer }} — note its typical magnitude
+      informs SAE initialization scale.
+    </div>
+    <div id="resid"></div>
+  </section>
+
+  <footer>
+    automechresearch · base model tour · regenerate with
+    <code>uv run python -m viz.tour</code>
+  </footer>
+</div>
+
+<script>
+  const INDUCTION = {{ induction_json|safe }};
+  const ATTN = {{ attn_json|safe }};
+  const RESID = {{ resid_json|safe }};
+
+  Plotly.newPlot("induction", INDUCTION.data, INDUCTION.layout, {responsive: true, displaylogo: false});
+  Plotly.newPlot("attention", ATTN.data, ATTN.layout, {responsive: true, displaylogo: false});
+  Plotly.newPlot("resid", RESID.data, RESID.layout, {responsive: true, displaylogo: false});
+</script>
+</body>
+</html>
