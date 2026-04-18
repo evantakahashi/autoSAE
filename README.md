@@ -76,6 +76,34 @@ Have a look at program.md and let's kick off a new experiment. Start with setup.
 
 The agent reads `program.md`, creates a branch `autosae/<tag>`, copies the templates, and begins the experiment loop. Leave it overnight. In the morning: `results.tsv`, `journal.md`, and `hypotheses.md` are your morning reading.
 
+## Visualizations
+
+Before letting an agent loose, it helps to understand the base model. The
+optional `viz` layer generates self-contained HTML dashboards:
+
+```bash
+# One-shot tour of the frozen Pythia-160M: induction heads, attention patterns,
+# logit lens, and per-layer residual stream norms. ~10 seconds.
+uv run python -m viz.tour
+# -> writes tour.html (gitignored). Open in any browser.
+```
+
+What the tour covers:
+
+- **Induction-head scores** — prefix-matching score per (layer, head) on
+  repeated random sequences (Olsson+2022). Useful sanity check that the base
+  model has the circuits SAEs typically find.
+- **Attention pattern viewer** — dropdown through all 12×12 heads on a short
+  name-tracking prompt.
+- **Logit lens** — projects each layer's residual stream through the
+  unembedding, so you can watch predictions sharpen across depth
+  (nostalgebraist 2020).
+- **Residual stream norms** — layer-wise ‖h‖ on real sentences. Shows why
+  layer 8 (our SAE target) has the scale it does.
+
+Planned: `viz/dashboard.py` (auto-generated after each `train_sae.py` run),
+`viz/explore_features.py` (feature browser for a trained SAE).
+
 ## Design choices
 
 - **Single file to modify.** The agent only touches `train_sae.py`. Small diffs, small blast radius.
