@@ -6,7 +6,15 @@
 
 ![SAE variant sweep](bench/compare.png)
 
-*Demo sweep (`bench/compare.py`): seven SAE configurations, five minutes of training each. Blue = valid (passes all constraints); grey = invalid. Left panel: `ce_loss_delta` per variant (lower = better). Right panel: the sparsity/fidelity Pareto traced by TopK+AuxK as K varies from 24 to 64. Key findings from this mini-sweep: (1) naive TopK beats L1 on reconstruction but kills half its features — Gao+2024's AuxK fixes that; (2) on this target, the best valid variant is `topk_k48_aux` at **0.298 nats/token — a 62% cut over the ReLU+L1 baseline**; (3) pushing K all the way to the L0 ceiling (`topk_k64_aux`, lowest right point) actually reconstructs better still but measures L0=64.1 and fails the constraint by a hair — a real "don't just max it out" lesson. This is ~7 autonomous-loop iterations; the overnight agent runs ~80.*
+*Demo sweep (`bench/compare.py`): eight SAE configurations, five minutes of training each. Blue = valid (passes all constraints); grey = invalid. Left panel: `ce_loss_delta` per variant (lower = better). Right panel: the sparsity/fidelity Pareto traced by TopK+AuxK as K varies from 24 to 48. Findings from this mini-sweep:*
+
+*1. **AuxK is load-bearing.** Naive TopK crushes the L1 baseline on reconstruction but kills 45–60% of features; Gao+2024's AuxK loss resurrects them (`topk_k48_aux` ends at 0.9% dead).*
+
+*2. **Best valid variant: `topk_k48_aux` at 0.298 nats/token — a 62% cut over the ReLU+L1 baseline.***
+
+*3. **Two lower-right points are tantalizingly invalid.** `topk_k64_aux` hits 0.232 (best of all) but measures L0=64.1 — fails the ≤64 ceiling by a rounding error. `topk_k48_aux_exp16` (double the dictionary) hits 0.258 but the five-minute budget isn't enough time to resurrect enough of the 12k features: dead fraction was still trending down (4780 → 136) when the timer ran out. Both are real research leads, not free lunches — the first wants either K=63 or a measurement-robustness fix; the second wants more compute or a lower dead-threshold.*
+
+*This is ~8 autonomous-loop iterations; the overnight agent runs ~80.*
 
 ## The big idea: `val_bpb` for SAEs
 

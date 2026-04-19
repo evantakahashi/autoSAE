@@ -107,6 +107,11 @@ VARIANTS: list[Variant] = [
         make=lambda: TopKAuxSAE(D_MODEL, expansion=8, k=64, k_aux=512),
         loss_fn=None,
     ),
+    Variant(
+        name="topk_k48_aux_exp16",
+        make=lambda: TopKAuxSAE(D_MODEL, expansion=16, k=48, k_aux=1024),
+        loss_fn=None,
+    ),
 ]
 
 
