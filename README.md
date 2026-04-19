@@ -4,6 +4,10 @@
 
 *Karpathy's autoresearch lets an AI agent iterate on nanochat pretraining overnight. `automechresearch` does the same thing for mech-interp: a Claude / Codex / whatever agent iterates on a **sparse autoencoder** trained on Pythia-160M, scoring itself on a single hard metric. You wake up to ~80 experiments, a human-readable journal, and a branch pointing at an SAE measurably better than the baseline.*
 
+![SAE variant sweep](bench/compare.png)
+
+*Demo sweep (`bench/compare.py`): four architectures, five-minute budget each. Blue = valid (passes all constraints); grey = invalid (fails `dead_fraction ≤ 0.10`). The winning TopK + AuxK variant (Gao+2024) cuts `ce_loss_delta` by **62%** vs. the ReLU + L1 baseline while keeping every constraint. This is roughly two autonomous-loop iterations — the overnight agent runs ~80.*
+
 ## The big idea: `val_bpb` for SAEs
 
 The autoresearch pattern only works if every experiment produces **one scalar metric, comparable across architectures**. The SAE analog:
@@ -103,6 +107,17 @@ What the tour covers:
 
 Planned: `viz/dashboard.py` (auto-generated after each `train_sae.py` run),
 `viz/explore_features.py` (feature browser for a trained SAE).
+
+For the static README chart above, a separate scripted sweep lives in `bench/`:
+
+```bash
+uv run python -m bench.compare     # runs 4 variants, ~20 min GPU, writes bench/benchmark.tsv
+uv run python -m bench.plot        # re-renders bench/compare.png from the tsv
+```
+
+`bench/` is intentionally distinct from `train_sae.py` — it lets us diff
+several architectures in one invocation for the README, without touching
+the single file the agent is supposed to edit.
 
 ## Design choices
 
