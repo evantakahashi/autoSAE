@@ -88,9 +88,24 @@ VARIANTS: list[Variant] = [
         loss_fn=lambda sae, x, r, f: topk_loss(sae, x, r, f, None),
     ),
     Variant(
+        name="topk_k24_aux",
+        make=lambda: TopKAuxSAE(D_MODEL, expansion=8, k=24, k_aux=512),
+        loss_fn=None,
+    ),
+    Variant(
+        name="topk_k32_aux",
+        make=lambda: TopKAuxSAE(D_MODEL, expansion=8, k=32, k_aux=512),
+        loss_fn=None,
+    ),
+    Variant(
         name="topk_k48_aux",
         make=lambda: TopKAuxSAE(D_MODEL, expansion=8, k=48, k_aux=512),
         loss_fn=None,  # special-cased in run_variant
+    ),
+    Variant(
+        name="topk_k64_aux",
+        make=lambda: TopKAuxSAE(D_MODEL, expansion=8, k=64, k_aux=512),
+        loss_fn=None,
     ),
 ]
 

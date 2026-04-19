@@ -39,11 +39,14 @@ def main() -> None:
     l0s = [r["l0"] for r in rows]
     valids = [bool(r["valid"]) for r in rows]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.8))
 
     # --- Left: bar chart of ce_loss_delta (lower is better)
     colors = ["#2b6cb0" if v else "#aaaaaa" for v in valids]
     bars = ax1.bar(names, deltas, color=colors, edgecolor="black", linewidth=0.5)
+    ax1.tick_params(axis="x", labelrotation=35)
+    for lbl in ax1.get_xticklabels():
+        lbl.set_horizontalalignment("right")
     ax1.set_ylabel("ce_loss_delta (nats/token) — lower is better")
     ax1.set_title("Reconstruction fidelity per variant")
     ax1.grid(axis="y", alpha=0.3)
@@ -73,7 +76,20 @@ def main() -> None:
                 fontweight="bold",
             )
 
-    # --- Right: Pareto scatter
+    # --- Right: Pareto curve (AuxK variants connected by K order) + other variants scattered.
+    aux_rows = [r for r in rows if r["variant"].endswith("_aux") and r["valid"]]
+    aux_rows.sort(key=lambda r: r["l0"])
+    if len(aux_rows) >= 2:
+        ax2.plot(
+            [r["l0"] for r in aux_rows],
+            [r["ce_loss_delta"] for r in aux_rows],
+            "-",
+            color="#2b6cb0",
+            linewidth=2,
+            alpha=0.7,
+            zorder=2,
+            label="TopK+AuxK Pareto",
+        )
     for n, l0, d, ok in zip(names, l0s, deltas, valids):
         ax2.scatter(
             l0,

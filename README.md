@@ -6,7 +6,7 @@
 
 ![SAE variant sweep](bench/compare.png)
 
-*Demo sweep (`bench/compare.py`): four architectures, five-minute budget each. Blue = valid (passes all constraints); grey = invalid (fails `dead_fraction ≤ 0.10`). The winning TopK + AuxK variant (Gao+2024) cuts `ce_loss_delta` by **62%** vs. the ReLU + L1 baseline while keeping every constraint. This is roughly two autonomous-loop iterations — the overnight agent runs ~80.*
+*Demo sweep (`bench/compare.py`): seven SAE configurations, five minutes of training each. Blue = valid (passes all constraints); grey = invalid. Left panel: `ce_loss_delta` per variant (lower = better). Right panel: the sparsity/fidelity Pareto traced by TopK+AuxK as K varies from 24 to 64. Key findings from this mini-sweep: (1) naive TopK beats L1 on reconstruction but kills half its features — Gao+2024's AuxK fixes that; (2) on this target, the best valid variant is `topk_k48_aux` at **0.298 nats/token — a 62% cut over the ReLU+L1 baseline**; (3) pushing K all the way to the L0 ceiling (`topk_k64_aux`, lowest right point) actually reconstructs better still but measures L0=64.1 and fails the constraint by a hair — a real "don't just max it out" lesson. This is ~7 autonomous-loop iterations; the overnight agent runs ~80.*
 
 ## The big idea: `val_bpb` for SAEs
 
