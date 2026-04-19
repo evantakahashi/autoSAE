@@ -4,6 +4,18 @@
 
 *Karpathy's autoresearch lets an AI agent iterate on nanochat pretraining overnight. `automechresearch` does the same thing for mech-interp: a Claude / Codex / whatever agent iterates on a **sparse autoencoder** trained on Pythia-160M, scoring itself on a single hard metric. You wake up to ~80 experiments, a human-readable journal, and a branch pointing at an SAE measurably better than the baseline.*
 
+![SAE variant sweep](bench/compare.png)
+
+*Demo sweep (`bench/compare.py`): eight SAE configurations, five minutes of training each. Blue = valid (passes all constraints); grey = invalid. Left panel: `ce_loss_delta` per variant (lower = better). Right panel: the sparsity/fidelity Pareto traced by TopK+AuxK as K varies from 24 to 48. Findings from this mini-sweep:*
+
+*1. **AuxK is load-bearing.** Naive TopK crushes the L1 baseline on reconstruction but kills 45–60% of features; Gao+2024's AuxK loss resurrects them (`topk_k48_aux` ends at 0.9% dead).*
+
+*2. **Best valid variant: `topk_k48_aux` at 0.298 nats/token — a 62% cut over the ReLU+L1 baseline.***
+
+*3. **Two lower-right points are tantalizingly invalid.** `topk_k64_aux` hits 0.232 (best of all) but measures L0=64.1 — fails the ≤64 ceiling by a rounding error. `topk_k48_aux_exp16` (double the dictionary) hits 0.258 but the five-minute budget isn't enough time to resurrect enough of the 12k features: dead fraction was still trending down (4780 → 136) when the timer ran out. Both are real research leads, not free lunches — the first wants either K=63 or a measurement-robustness fix; the second wants more compute or a lower dead-threshold.*
+
+*This is ~8 autonomous-loop iterations; the overnight agent runs ~80.*
+
 ## The big idea: `val_bpb` for SAEs
 
 The autoresearch pattern only works if every experiment produces **one scalar metric, comparable across architectures**. The SAE analog:
@@ -104,17 +116,16 @@ What the tour covers:
 Planned: `viz/dashboard.py` (auto-generated after each `train_sae.py` run),
 `viz/explore_features.py` (feature browser for a trained SAE).
 
-If you want to diff several SAE architectures in a single invocation (without
-touching the `train_sae.py` file the agent is supposed to edit), a scripted
-sweep lives in `bench/`:
+For the static README chart above, a separate scripted sweep lives in `bench/`:
 
 ```bash
 uv run python -m bench.compare     # runs all variants, writes bench/benchmark.tsv
-uv run python -m bench.plot        # renders bench/compare.png from the tsv
+uv run python -m bench.plot        # re-renders bench/compare.png from the tsv
 ```
 
-Both outputs are gitignored — run this on your own fork to see how the
-variants stack up on your hardware.
+`bench/` is intentionally distinct from `train_sae.py` — it lets us diff
+several architectures in one invocation for the README, without touching
+the single file the agent is supposed to edit.
 
 ## Design choices
 
