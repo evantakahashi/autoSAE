@@ -23,6 +23,11 @@ dashboard.html
 explore_features.html
 viz/_cache/
 
+# Personal bench outputs — regenerated from the user's own sweep.
+# Anyone who forks the repo should run `bench/compare.py` and produce their own.
+bench/compare.png
+bench/benchmark.tsv
+
 # Autoresearch-style untracked run artifacts
 results.tsv
 run.log
